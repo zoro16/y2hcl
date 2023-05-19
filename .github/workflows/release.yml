@@ -135,6 +135,7 @@ jobs:
   publish-crates:
     name: "Publish Crate"
     runs-on: ubuntu-latest
+    needs: [version_bump, build]
     steps:
       - uses: actions/checkout@v3
       - name: publish package to crates
