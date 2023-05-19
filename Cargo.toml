@@ -1,0 +1,26 @@
+[package]
+name = "y2hcl"
+version = "0.1.0"
+edition = "2021"
+authors = ["Mohamed Abdelgadir"]
+description = "Convert Helm Chart Values yaml to Terraform helm_release set_value, Helm Cli --set values etc."
+license = "MIT"
+repository = "https://github.com/zoro16/y2hcl"
+readme = "README.md"
+keywords = ["shell", "cli", "yaml", "helm", "hcl"]
+categories = [
+    "command-line-utilities",
+    "convert-yaml-values-to-hcl"
+]
+
+[dependencies]
+clap = { version = "4.2.7", features = ["derive"] }
+serde = "1.0.162"
+serde_yaml = "0.9.21"
+
+[profile.release]
+opt-level = 'z'     # Optimize for size
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
+panic = 'abort'     # Abort on panic
+strip = true        # Strip symbols from binary*

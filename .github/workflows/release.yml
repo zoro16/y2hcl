@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  ARTIFACT_NAME: y2hcl
+
+jobs:
+  version_bump:
+    name: "Versioning"
+    runs-on: ubuntu-latest
+    permissions: write-all
+    outputs:
+      semver: ${{ steps.gitversion.outputs.semVer }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: "Install GitVersion"
+        uses: gittools/actions/gitversion/setup@v0
+        with:
+          versionSpec: '5.x'
+
+      - name: "Determine Version"
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v0
+
+      - name: "Display GitVersion variables (without prefix)"
+        run: |
+          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
+
+      - name: "Update Crate Version"
+        run: |
+          sed -i '0,/version/s/^version = "\([0-9.]*\)"$/version = "${{ steps.gitversion.outputs.semVer }}"/' Cargo.toml
+          cargo generate-lockfile
+
+      - name: "New Crate Version and Tag"
+        run: |
+          git config --global user.name 'Mohamed Abdelgadir'
+          git config --global user.email 'zoro16@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore(release): Bump crate's' version ${{ steps.gitversion.outputs.semVer }}" --allow-empty
+          git tag ${{ steps.gitversion.outputs.semVer }}
+          git push origin main
+          git push origin --tags
+
+  build:
+    name: "Build"
+    needs: [version_bump]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            toolchain: stable
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            toolchain: stable
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            toolchain: stable
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            toolchain: stable
+          # - target: aarch64-unknown-linux-gnu
+          #   os: ubuntu-latest
+          #   toolchain: stable
+          # - target: aarch64-unknown-linux-musl
+          #   os: ubuntu-latest
+          #   toolchain: stable
+          # - target: aarch64-apple-darwin
+          #   os: macos-latest
+          #   toolchain: stable
+          # - target: universal-apple-darwin
+          #   os: macos-latest
+          #   toolchain: stable
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: "Install Rust"
+        run: |
+          rustup update ${{ matrix.toolchain }}
+          rustup default ${{ matrix.toolchain }}
+
+      - name: "Install Build Target"
+        run: |
+          rustup target add ${{ matrix.target }}
+
+      - name: "Build"
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # - name: "Show current directory"
+      #   if: matrix.os == 'windows-latest'
+      #   shell: pwsh
+      #   run: |
+      #     Get-ChildItem -Recurse
+
+      - name: "Archive Binary output to TAR"
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          cp ./target/${{ matrix.target }}/release/${{ env.ARTIFACT_NAME }} .
+          tar -cvf ${{ env.ARTIFACT_NAME }}-${{ matrix.target }}.tar ${{ env.ARTIFACT_NAME }}
+
+      - name: "Archive Binary output to ZIP"
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Copy-Item "${{ github.workspace }}\target\${{ matrix.target }}\release\${{ env.ARTIFACT_NAME }}.exe" -Destination "${{ github.workspace }}"
+          Compress-Archive -LiteralPath  ${{ github.workspace }}\${{ env.ARTIFACT_NAME }}.exe -DestinationPath ${{ github.workspace }}\${{ env.ARTIFACT_NAME }}-${{ matrix.target }}.zip
+
+      - name: "Upload Linux and MacOS Artifacts"
+        uses: actions/upload-artifact@v3
+        if: matrix.os != 'windows-latest'
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ matrix.target }}
+          path: ${{ github.workspace }}/*.tar
+          retention-days: 1
+
+      - name: "Upload Windows Artifacts"
+        uses: actions/upload-artifact@v3
+        if: matrix.os == 'windows-latest'
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ matrix.target }}
+          path: ${{ github.workspace }}/*.zip
+          retention-days: 1
+
+  publish-crates:
+    name: "Publish Crate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: publish package to crates
+        run: |
+          cargo package
+          cargo publish --token ${{ secrets.CARGO_TOKEN }}
+
+  release:
+    name: "Release"
+    needs: [version_bump, build]
+    runs-on: ubuntu-20.04
+    permissions: write-all
+    steps:
+      - uses: actions/checkout@v3
+      - name: "Download all workflow run artifacts"
+        uses: actions/download-artifact@v3
+      - name: "Check the artifacts"
+        run: |
+          ls -la
+          mkdir artifacts
+          cp ${{ env.ARTIFACT_NAME }}-x86_64-unknown-linux-gnu/* artifacts/
+          cp ${{ env.ARTIFACT_NAME }}-x86_64-unknown-linux-musl/* artifacts/
+          cp ${{ env.ARTIFACT_NAME }}-x86_64-apple-darwin/* artifacts/
+          cp ${{ env.ARTIFACT_NAME }}-x86_64-pc-windows-msvc/* artifacts/
+      - name: "Create a Release with GH CLI"
+        run: |
+          gh release create ${{ needs.version_bump.outputs.semver }} \
+          ./artifacts/* \
+          --generate-notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
