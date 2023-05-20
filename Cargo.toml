@@ -10,7 +10,6 @@ readme = "README.md"
 keywords = ["shell", "cli", "yaml", "helm", "hcl"]
 categories = [
     "command-line-utilities",
-    "convert-yaml-values-to-hcl"
 ]
 
 [dependencies]
